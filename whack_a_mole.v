@@ -24,8 +24,8 @@ module whack_a_mole (
     wire [9:0] score;           // 由 score_display 控制
     wire [5:0] time_left;       // 由 time_display 控制
 
-    wire  [2:0] row_seed = 3'b101;       // seed for lfsr3
-    wire  [2:0] col_seed = 3'b011;       // should be non-zero
+    wire  [15:0] row_seed = 16'hC1A6;       // seed for lfsr3
+    wire  [15:0] col_seed = 16'hF579;       // should be non-zero
 
     wire [1:0] rand_position_row, rand_position_col;     // random position generated for mole  (00 01 10 11)
     wire [1:0] mole_position_row, mole_position_col;     // current mole position on dot matrix (00 01 10 11)
@@ -36,6 +36,7 @@ module whack_a_mole (
     clk_div clk_div_sec (clk, reset, `TimeExpire_sec, clk_sec);
     clk_div clk_div_keypad (clk, reset, `TimeExpire_keypad, clk_keypad);
     clk_div clk_div_dotMatrix (clk, reset, `TimeExpire_dotMatrix, clk_dotMatrix);
+	 
 
     random_position_generator rpg_m (clk_dotMatrix, reset, row_seed, col_seed, rand_position_row, rand_position_col);
 
@@ -98,33 +99,25 @@ endmodule
 
 
 // 偽隨機數產生器 (產生地鼠位置)
-module lfsr3 (
-    input  wire       clk,
-    input  wire       rst,    // reset
-    input  wire [2:0] seed,   // should be non-zero
-    output reg  [1:0] out     // 2-bit output
+module lfsr16 (
+    input  wire        clk,
+    input  wire        rst,
+    input  wire [15:0] dynamic_seed,
+    output wire [1:0]  rand_row,
+    output wire [1:0]  rand_col
 );
-    reg [2:0] state;
-    wire feedback = state[2] ^ state[0];
+    reg [15:0] state;
+    wire feedback = state[15] ^ state[13] ^ state[12] ^ state[10];
 
-    always @(posedge clk or negedge rst) begin      // 以 clk_dotMatrix 產生隨機數
-        if (!rst) begin
-            state <= (seed == 3'b000) ? 3'b001 : seed;
-        end
-        else begin
-            state <= {feedback, state[2:1]};
-        end
+    always @(posedge clk or negedge rst) begin
+        if (!rst)
+            state <= (dynamic_seed == 16'd0) ? 16'hACE1 : dynamic_seed;
+        else
+            state <= {state[14:0], feedback};
     end
 
-    always @(*) begin
-        case (state[1:0])
-            2'b00: out = 2'd0;
-            2'b01: out = 2'd1;
-            2'b10: out = 2'd2;
-            2'b11: out = 2'd3;
-            default: out = 2'd0;
-        endcase
-    end
+    assign rand_row = state[1:0];
+    assign rand_col = state[15:14];
 endmodule
 
 
@@ -132,18 +125,17 @@ endmodule
 module random_position_generator (
     input wire  clk,
     input wire  rst,
-    input wire [2:0] row_seed,
-    input wire [2:0] col_seed,
+    input wire [15:0] row_seed,
+    input wire [15:0] col_seed,
 
-    output reg [1:0] rand_row,
-    output reg [1:0] rand_col
+    output wire [1:0] rand_row,
+    output wire [1:0] rand_col
 );
-    lfsr3 lfsr3_m_row (clk, rst, row_seed, rand_row);
+    lfsr16 lfsr16_m_row (clk, rst, row_seed, rand_row);
 
-    lfsr3 lfsr3_m_col (clk, rst, col_seed, rand_col);
+    lfsr16 lfsr16_m_col (clk, rst, col_seed, rand_col);
 
 endmodule
-
 
 // 遊戲狀態 (管理 is_started)
 module game_state (
@@ -153,7 +145,7 @@ module game_state (
     input wire [5:0] time_left,
     output reg       is_started = 0
 );
-    always @(negedge reset or posedge clk_sec) begin
+    always @(negedge reset or posedge clk_sec or negedge start) begin
         if (!reset) begin
             is_started <= 1'b0;
         end
